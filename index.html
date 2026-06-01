@@ -2397,13 +2397,17 @@ function importExcel(event){
 
 
 // ══════════════════════════════════════════
-//  AUTO-SAVE & RESTORE (localStorage)
 // ══════════════════════════════════════════
-const STORAGE_KEY = 'alfanar_trainhub_v1';
+//  SUPABASE CLOUD SAVE & RESTORE
+// ══════════════════════════════════════════
+const SUPABASE_URL = 'https://cvzjqqpavpjwclomwqjc.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_4zSu7PCaBZhQ6miAjrn0YA_yWy-Eb0F';
+const SNAPSHOT_ID  = 'main';
 
-function saveToStorage(){
+async function saveToStorage(){
   try {
     const snapshot = {
+      id: SNAPSHOT_ID,
       trainees,
       attendance,
       evaluations,
@@ -2415,19 +2419,39 @@ function saveToStorage(){
       fileCounter,
       savedAt: new Date().toISOString()
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots?id=eq.${SNAPSHOT_ID}`, {
+      method: 'GET',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+    const existing = await res.json();
+    const method = existing.length ? 'PATCH' : 'POST';
+    const url = existing.length
+      ? `${SUPABASE_URL}/rest/v1/snapshots?id=eq.${SNAPSHOT_ID}`
+      : `${SUPABASE_URL}/rest/v1/snapshots`;
+    await fetch(url, {
+      method,
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(snapshot)
+    });
   } catch(e){
-    // Storage full (photos can be large) — warn but don't crash
-    console.warn('Auto-save failed:', e.message);
-    showToast('⚠ Auto-save failed — storage may be full. Export to Excel to back up.');
+    console.warn('Cloud save failed:', e.message);
+    showToast('⚠ Cloud save failed — check your connection.');
   }
 }
 
-function loadFromStorage(){
+async function loadFromStorage(){
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return false;
-    const snap = JSON.parse(raw);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots?id=eq.${SNAPSHOT_ID}`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+    const rows = await res.json();
+    if(!rows.length) return false;
+    const snap = rows[0];
     if(snap.trainees)        trainees        = snap.trainees;
     if(snap.attendance)      attendance      = snap.attendance;
     if(snap.evaluations)     evaluations     = snap.evaluations;
@@ -2439,7 +2463,7 @@ function loadFromStorage(){
     if(snap.fileCounter)     fileCounter     = snap.fileCounter;
     return snap.savedAt || true;
   } catch(e){
-    console.warn('Load from storage failed:', e);
+    console.warn('Load from cloud failed:', e);
     return false;
   }
 }
@@ -2450,7 +2474,7 @@ function loadFromStorage(){
 function autosaveAfter(fn){
   return function(){
     const result = fn.apply(this, arguments);
-    saveToStorage();
+    saveToStorage().then(()=>showSaveIndicator()).catch(()=>{});
     return result;
   };
 }
@@ -2476,7 +2500,7 @@ handleTraineePhoto = function(id, input){
 const _origDoRemovePhoto = doRemovePhoto;
 doRemovePhoto = function(id, store, box, btn){
   _origDoRemovePhoto(id, store, box, btn);
-  saveToStorage();
+  saveToStorage().catch(()=>{});
 };
 
 // Show save indicator in topbar
@@ -2500,7 +2524,7 @@ if(navData){
   const saveBtn = document.createElement('div');
   saveBtn.className = 'nav-item';
   saveBtn.innerHTML = '<i class="ti ti-device-floppy" style="font-size:16px"></i> Save Now';
-  saveBtn.onclick = ()=>{ saveToStorage(); showToast('✓ Data saved to browser'); showSaveIndicator(); };
+  saveBtn.onclick = ()=>{ saveToStorage().then(()=>{ showToast('✓ Data saved to cloud'); showSaveIndicator(); }); };
   navData.appendChild(saveBtn);
 }
 
@@ -2525,7 +2549,7 @@ attachPhotoInput = function(id, store){
       const orig = inp.onchange;
       inp.onchange = function(){
         if(orig) orig.apply(this, arguments);
-        setTimeout(saveToStorage, 600); // after FileReader completes
+        setTimeout(()=>saveToStorage().catch(()=>{}), 600); // after FileReader completes
       };
     }
   }, 100);
@@ -2536,19 +2560,24 @@ document.getElementById('att-date').value=today();
 document.addEventListener('DOMContentLoaded',()=>{ document.getElementById('ev-date') && (document.getElementById('ev-date').value=today()); });
 document.getElementById('ev-date') && (document.getElementById('ev-date').value=today());
 
-// Load saved data from browser storage
-const savedAt = loadFromStorage();
-populateTraineeSelects();
-renderOverview();
-renderOutcomes();
-renderHistory();
+// Show loading indicator
+showToast('⏳ Loading data from cloud...');
 
-// Show restored indicator
-if(savedAt){
-  const d = new Date(savedAt);
-  const label = isNaN(d)?'previously':'on '+d.toLocaleDateString()+' at '+d.toLocaleTimeString();
-  setTimeout(()=>showToast('✓ Data restored from last session ('+label+')'), 600);
-}
+// Load saved data from Supabase cloud
+(async()=>{
+  const savedAt = await loadFromStorage();
+  populateTraineeSelects();
+  renderOverview();
+  renderOutcomes();
+  renderHistory();
+  if(savedAt){
+    const d = new Date(savedAt);
+    const label = isNaN(d)?'previously':'on '+d.toLocaleDateString()+' at '+d.toLocaleTimeString();
+    setTimeout(()=>showToast('✓ Data loaded from cloud ('+label+')'), 400);
+  } else {
+    setTimeout(()=>showToast('☁ Connected to cloud — ready to save data'), 400);
+  }
+})();
 </script>
 </body>
 </html>
